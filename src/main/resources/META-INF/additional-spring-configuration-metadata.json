@@ -1,0 +1,16 @@
+{
+  "properties": [
+    {
+      "name": "conductor.event-queues.kafka.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Enable the use of Kafka implementation to provide queues for consuming events.",
+      "sourceType": "com.netflix.conductor.kafka.config.KafkaEventQueueConfiguration"
+    },
+    {
+      "name": "conductor.default-event-queue.type",
+      "type": "java.lang.String",
+      "description": "The default event queue type to listen on for the WAIT task.",
+      "sourceType": "com.netflix.conductor.kafka.config.KafkaEventQueueConfiguration"
+    }
+  ]
+}
