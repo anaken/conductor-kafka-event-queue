@@ -1,5 +1,7 @@
 package com.netflix.conductor.kafka.eventqueue;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.netflix.conductor.core.events.queue.Message;
 import com.netflix.conductor.core.events.queue.ObservableQueue;
 import com.netflix.conductor.kafka.config.KafkaEventQueueProperties;
@@ -9,19 +11,18 @@ import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
-import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import rx.Observable;
 import rx.Observable.OnSubscribe;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
@@ -33,7 +34,13 @@ public class KafkaObservableQueue implements ObservableQueue {
 
     private static final String QUEUE_TYPE = "kafka";
 
+    private final String queueURI;
+
     private final String queueName;
+
+    private final List<String> topics;
+
+    private final String groupId;
 
     private int pollIntervalInMS = 100;
 
@@ -41,18 +48,32 @@ public class KafkaObservableQueue implements ObservableQueue {
 
     private volatile boolean running;
 
-    private KafkaProducer<String, String> producer;
+    private final KafkaProducer<String, String> producer;
 
     private KafkaConsumer<String, String> consumer;
 
-    public KafkaObservableQueue(String queueName, KafkaEventQueueProperties properties) {
-        this.queueName = queueName;
+    private ObjectMapper objectMapper;
+
+    public KafkaObservableQueue(String queueName, KafkaEventQueueProperties properties,
+                                KafkaProducer<String, String> producer) {
+        this.queueURI = queueName;
+        String[] queueNameParts = queueName.split(":");
+        if (queueNameParts.length > 1) {
+            this.groupId = queueNameParts[0];
+            this.queueName = queueNameParts[1];
+        } else {
+            this.groupId = properties.getGroupId();
+            this.queueName = queueNameParts[0];
+        }
+        this.topics = Arrays.asList(this.queueName.split(","));
         if (properties.getPollIntervalMs() != null) {
             this.pollIntervalInMS = properties.getPollIntervalMs();
         }
         if (properties.getPollTimeoutMs() != null) {
             this.pollTimeoutInMs = properties.getPollTimeoutMs();
         }
+        this.producer = producer;
+        this.objectMapper = new ObjectMapper();
         init(properties);
     }
 
@@ -69,7 +90,7 @@ public class KafkaObservableQueue implements ObservableQueue {
             if (prop != null) {
                 consumerProperties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, prop);
             }
-            prop = properties.getGroupId();
+            prop = this.groupId;
             if (prop != null) {
                 consumerProperties.put(ConsumerConfig.GROUP_ID_CONFIG, prop);
             }
@@ -90,21 +111,7 @@ public class KafkaObservableQueue implements ObservableQueue {
              * to get the partition information.
              */
             this.consumer = new KafkaConsumer<>(consumerProperties);
-            this.consumer.subscribe(Collections.singletonList(queueName));
-
-            /**
-             * Create a producer to put events on the topic for testing purposes or to put errors on the error topic.
-             */
-            Properties producerProperties = new Properties();
-            prop = properties.getBootstrapServers();
-            if (prop != null) {
-                producerProperties.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, prop);
-            }
-            producerProperties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-            producerProperties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-            checkProducerProps(producerProperties);
-            producerProperties.put(ProducerConfig.CLIENT_ID_CONFIG, queueName + "_producer_");
-            this.producer = new KafkaProducer<>(producerProperties);
+            this.consumer.subscribe(this.topics);
         } catch (KafkaException e) {
             e.printStackTrace();
         }
@@ -137,23 +144,9 @@ public class KafkaObservableQueue implements ObservableQueue {
                 ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG);
         List<String> keysNotFound = hasKeyAndValue(consumerProps, mandatoryKeys);
         if (keysNotFound.size() > 0) {
-            logger.error("Configuration missing for Kafka consumer. {}" + keysNotFound.toString());
-            throw new RuntimeException("Configuration missing for Kafka consumer." + keysNotFound.toString());
-        }
-    }
-
-    /**
-     * Checks mandatory configurations are available for kafka producer.
-     *
-     * @param producerProps
-     */
-    private void checkProducerProps(Properties producerProps) {
-        List<String> mandatoryKeys = Arrays.asList(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
-                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG);
-        List<String> keysNotFound = hasKeyAndValue(producerProps, mandatoryKeys);
-        if (keysNotFound.size() > 0) {
-            logger.error("Configuration missing for Kafka producer. {}" + keysNotFound.toString());
-            throw new RuntimeException("Configuration missing for Kafka producer." + keysNotFound.toString());
+            String error = String.format("Configuration missing for Kafka consumer. %s", keysNotFound);
+            logger.error(error);
+            throw new RuntimeException(error);
         }
     }
 
@@ -188,19 +181,21 @@ public class KafkaObservableQueue implements ObservableQueue {
             String[] idParts = message.getId().split(":");
             int partitionNumber = Integer.parseInt(idParts[2]);
             boolean didIt = false;
-            for (PartitionInfo partition : consumer.partitionsFor(queueName)) {
-                if (partitionNumber == partition.partition()) {
-                    Map<TopicPartition, OffsetAndMetadata> currentOffsets = new HashMap<>();
-                    currentOffsets.put(new TopicPartition(idParts[1], partitionNumber),
-                            new OffsetAndMetadata(Integer.parseInt(idParts[3]) + 1, "no metadata"));
-                    try {
-                        consumer.commitSync(currentOffsets);
-                        messageIds.add(message.getId());
-                    } catch (KafkaException ke) {
-                        logger.error("kafka consumer selective commit failed.", ke);
+            for (String topic : this.topics) {
+                for (PartitionInfo partition : consumer.partitionsFor(topic)) {
+                    if (partitionNumber == partition.partition()) {
+                        Map<TopicPartition, OffsetAndMetadata> currentOffsets = new HashMap<>();
+                        currentOffsets.put(new TopicPartition(idParts[1], partitionNumber),
+                                new OffsetAndMetadata(Integer.parseInt(idParts[3]) + 1, "no metadata"));
+                        try {
+                            consumer.commitSync(currentOffsets);
+                            messageIds.add(message.getId());
+                        } catch (KafkaException ke) {
+                            logger.error("kafka consumer selective commit failed.", ke);
+                        }
+                        didIt = true;
+                        break;
                     }
-                    didIt = true;
-                    break;
                 }
             }
             if (didIt) {
@@ -230,12 +225,12 @@ public class KafkaObservableQueue implements ObservableQueue {
 
     @Override
     public String getName() {
-        return queueName;
+        return queueURI;
     }
 
     @Override
     public String getURI() {
-        return queueName;
+        return queueURI;
     }
 
     /**
@@ -264,13 +259,24 @@ public class KafkaObservableQueue implements ObservableQueue {
 
             logger.info("polled {} messages from kafka topic.", records.count());
             records.forEach(record -> {
+                Map<String, String> headers = new HashMap<>();
+                record.headers().forEach(header -> headers.put(header.key(),
+                        new String(header.value(), StandardCharsets.UTF_8)));
+                String headersJson = null;
+                try {
+                    headersJson = objectMapper.writeValueAsString(headers);
+                } catch (JsonProcessingException e) {
+                    logger.error("message headers build error.", e);
+                }
                 logger.debug("Consumer Record: " + "key: {}, " + "value: {}, " + "partition: {}, " + "offset: {}",
                         record.key(), record.value(), record.partition(), record.offset());
                 String id = record.key() + ":" + record.topic() + ":" + record.partition() + ":" + record.offset();
-                Message message = new Message(id, String.valueOf(record.value()), "");
+                String messagePayload = String.format("{\"eventData\":%s,\"eventHeaders\":%s}",
+                        record.value(), headersJson);
+                Message message = new Message(id, messagePayload, "");
                 messages.add(message);
             });
-            Monitors.recordEventQueueMessagesProcessed(QUEUE_TYPE, this.queueName, messages.size());
+            Monitors.recordEventQueueMessagesProcessed(QUEUE_TYPE, this.queueURI, messages.size());
         } catch (KafkaException e) {
             logger.error("kafka consumer message polling failed.", e);
             Monitors.recordObservableQMessageReceivedErrors(QUEUE_TYPE);
