@@ -3,7 +3,7 @@
 
       $ git clone https://github.com/Netflix/conductor.git
 
-* Copy folder `conductor-kafka-event-queue` to the root of netflix conductor repository
+* Copy contents of `conductor-kafka-event-queue` to new folder `kafka-event-queue` created in the root of netflix conductor repository
 * Add project to `settings.gradle` like this:
 
       include 'kafka-event-queue'
