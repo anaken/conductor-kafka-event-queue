@@ -27,10 +27,21 @@ import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class KafkaObservableQueue implements ObservableQueue {
 
     private static final Logger logger = LoggerFactory.getLogger(KafkaObservableQueue.class);
+
+    private static final Pattern QUEUE_PARAMS_PATTERN = Pattern.compile("([^=]+)=([^;]+);?");
+
+    private static final String QUEUE_PARAM_TOPICS = "topics";
+    private static final String QUEUE_PARAM_GROUP = "group";
+    private static final String QUEUE_PARAM_FILTER_NAME = "filteringHeader";
+    private static final String QUEUE_PARAM_FILTER_VALUE = "filteringValue";
+
+    private static final String QUEUE_FILTER_BY_PARTITION_KEY = "PARTITION_KEY";
 
     private static final String QUEUE_TYPE = "kafka";
 
@@ -40,7 +51,13 @@ public class KafkaObservableQueue implements ObservableQueue {
 
     private final List<String> topics;
 
-    private final String groupId;
+    private String groupId;
+
+    private String filteringHeader;
+
+    private boolean filterByPartitionKey = false;
+
+    private String filteringValue;
 
     private int pollIntervalInMS = 100;
 
@@ -52,20 +69,38 @@ public class KafkaObservableQueue implements ObservableQueue {
 
     private KafkaConsumer<String, String> consumer;
 
-    private ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper;
 
     public KafkaObservableQueue(String queueName, KafkaEventQueueProperties properties,
                                 KafkaProducer<String, String> producer) {
         this.queueURI = queueName;
-        String[] queueNameParts = queueName.split(":");
-        if (queueNameParts.length > 1) {
-            this.groupId = queueNameParts[0];
-            this.queueName = queueNameParts[1];
+        this.groupId = properties.getGroupId();
+        Map<String, String> queueParams = parseParams();
+        if (queueParams.isEmpty()) {
+            String[] queueNameParts = queueName.split(":");
+            if (queueNameParts.length > 1) {
+                this.groupId = queueNameParts[0];
+                this.queueName = queueNameParts[1];
+            } else {
+                this.queueName = queueNameParts[0];
+            }
         } else {
-            this.groupId = properties.getGroupId();
-            this.queueName = queueNameParts[0];
+            this.queueName = queueParams.get(QUEUE_PARAM_TOPICS);
+            if (queueParams.containsKey(QUEUE_PARAM_GROUP)) {
+                this.groupId = queueParams.get(QUEUE_PARAM_GROUP);
+            }
+            if (queueParams.containsKey(QUEUE_PARAM_FILTER_NAME) && queueParams.containsKey(QUEUE_PARAM_FILTER_VALUE)) {
+                String filterName = queueParams.get(QUEUE_PARAM_FILTER_NAME);
+                if (QUEUE_FILTER_BY_PARTITION_KEY.equals(filterName)) {
+                    this.filterByPartitionKey = true;
+                } else {
+                    this.filteringHeader = filterName;
+                }
+                this.filteringValue = queueParams.get(QUEUE_PARAM_FILTER_VALUE);
+            }
         }
         this.topics = Arrays.asList(this.queueName.split(","));
+
         if (properties.getPollIntervalMs() != null) {
             this.pollIntervalInMS = properties.getPollIntervalMs();
         }
@@ -74,7 +109,20 @@ public class KafkaObservableQueue implements ObservableQueue {
         }
         this.producer = producer;
         this.objectMapper = new ObjectMapper();
+
         init(properties);
+    }
+
+    private Map<String, String> parseParams() {
+        Matcher matcher = QUEUE_PARAMS_PATTERN.matcher(this.queueURI);
+        Map<String, String> params = new HashMap<>();
+        while (matcher.find()) {
+            params.put(matcher.group(1), matcher.group(2));
+        }
+        if (!params.containsKey(QUEUE_PARAM_TOPICS)) {
+            return new HashMap<>();
+        }
+        return params;
     }
 
     /**
@@ -262,6 +310,14 @@ public class KafkaObservableQueue implements ObservableQueue {
                 Map<String, String> headers = new HashMap<>();
                 record.headers().forEach(header -> headers.put(header.key(),
                         new String(header.value(), StandardCharsets.UTF_8)));
+                if (this.filteringHeader != null && !this.filteringValue.equals(headers.get(this.filteringHeader))
+                        || this.filterByPartitionKey && !this.filteringValue.equals(record.key())) {
+                    Map<TopicPartition, OffsetAndMetadata> currentOffsets = new HashMap<>();
+                    currentOffsets.put(new TopicPartition(record.topic(), record.partition()),
+                            new OffsetAndMetadata(record.offset() + 1, "no metadata"));
+                    consumer.commitSync(currentOffsets);
+                    return;
+                }
                 String headersJson = null;
                 try {
                     headersJson = objectMapper.writeValueAsString(headers);
