@@ -71,6 +71,8 @@ public class KafkaObservableQueue implements ObservableQueue {
 
     private final ObjectMapper objectMapper;
 
+    private ThreadLocal<Map<TopicPartition, Long>> commitOffsetMap = ThreadLocal.withInitial(HashMap::new);
+
     public KafkaObservableQueue(String queueName, KafkaEventQueueProperties properties,
                                 KafkaProducer<String, String> producer) {
         this.queueURI = queueName;
@@ -224,11 +226,11 @@ public class KafkaObservableQueue implements ObservableQueue {
 
     @Override
     public List<String> ack(List<Message> messages) {
+        commitAsyncOffsets();
         List<String> messageIds = new ArrayList<>();
         for (Message message : messages) {
             String[] idParts = message.getId().split(":");
             int partitionNumber = Integer.parseInt(idParts[2]);
-            boolean didIt = false;
             for (String topic : this.topics) {
                 for (PartitionInfo partition : consumer.partitionsFor(topic)) {
                     if (partitionNumber == partition.partition()) {
@@ -237,17 +239,12 @@ public class KafkaObservableQueue implements ObservableQueue {
                                 new OffsetAndMetadata(Integer.parseInt(idParts[3]) + 1, "no metadata"));
                         try {
                             consumer.commitSync(currentOffsets);
-                            messageIds.add(message.getId());
                         } catch (KafkaException ke) {
+                            messageIds.add(message.getId());
                             logger.error("kafka consumer selective commit failed.", ke);
                         }
-                        didIt = true;
-                        break;
                     }
                 }
-            }
-            if (didIt) {
-                break;
             }
         }
         return messageIds;
@@ -312,10 +309,7 @@ public class KafkaObservableQueue implements ObservableQueue {
                         new String(header.value(), StandardCharsets.UTF_8)));
                 if (this.filteringHeader != null && !this.filteringValue.equals(headers.get(this.filteringHeader))
                         || this.filterByPartitionKey && !this.filteringValue.equals(record.key())) {
-                    Map<TopicPartition, OffsetAndMetadata> currentOffsets = new HashMap<>();
-                    currentOffsets.put(new TopicPartition(record.topic(), record.partition()),
-                            new OffsetAndMetadata(record.offset() + 1, "no metadata"));
-                    consumer.commitSync(currentOffsets);
+                    addAsyncCommitOffset(record.topic(), record.partition(), record.offset());
                     return;
                 }
                 String headersJson = null;
@@ -324,7 +318,7 @@ public class KafkaObservableQueue implements ObservableQueue {
                 } catch (JsonProcessingException e) {
                     logger.error("message headers build error.", e);
                 }
-                logger.debug("Consumer Record: " + "key: {}, " + "value: {}, " + "partition: {}, " + "offset: {}",
+                logger.debug("Consumer Record: key: {}, value: {}, partition: {}, offset: {}",
                         record.key(), record.value(), record.partition(), record.offset());
                 String id = record.key() + ":" + record.topic() + ":" + record.partition() + ":" + record.offset();
                 String messagePayload = String.format("{\"eventData\":%s,\"eventHeaders\":%s}",
@@ -332,12 +326,35 @@ public class KafkaObservableQueue implements ObservableQueue {
                 Message message = new Message(id, messagePayload, "");
                 messages.add(message);
             });
+            if (messages.isEmpty()) {
+                commitAsyncOffsets();
+            }
             Monitors.recordEventQueueMessagesProcessed(QUEUE_TYPE, this.queueURI, messages.size());
         } catch (KafkaException e) {
             logger.error("kafka consumer message polling failed.", e);
             Monitors.recordObservableQMessageReceivedErrors(QUEUE_TYPE);
         }
         return messages;
+    }
+
+    void addAsyncCommitOffset(String topic, int partition, long offset) {
+        TopicPartition topicPartition = new TopicPartition(topic, partition);
+        commitOffsetMap.get().compute(topicPartition, (k, v) -> v == null ? offset : Math.max(v, offset));
+    }
+
+    void commitAsyncOffsets() {
+        Map<TopicPartition, OffsetAndMetadata> currentOffsets;
+        for (Map.Entry<TopicPartition, Long> offsetEntry : commitOffsetMap.get().entrySet()) {
+            currentOffsets = new HashMap<>();
+            currentOffsets.put(offsetEntry.getKey(),
+                    new OffsetAndMetadata(offsetEntry.getValue() + 1, "no metadata"));
+            try {
+                consumer.commitSync(currentOffsets);
+            } catch (KafkaException ke) {
+                logger.error("kafka consumer filtered messages commit failed.", ke);
+            }
+        }
+        commitOffsetMap.get().clear();
     }
 
     /**
