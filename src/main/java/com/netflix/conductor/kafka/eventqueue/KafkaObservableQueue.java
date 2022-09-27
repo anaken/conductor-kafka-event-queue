@@ -400,11 +400,6 @@ public class KafkaObservableQueue implements ObservableQueue {
 
     @Override
     public void close() {
-        if (this.producer != null) {
-            this.producer.flush();
-            this.producer.close();
-        }
-
         if (this.consumer != null) {
             consumer.unsubscribe();
             consumer.close();
