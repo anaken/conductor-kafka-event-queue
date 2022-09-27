@@ -14,6 +14,8 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static com.netflix.conductor.kafka.eventqueue.KafkaObservableQueue.QUEUE_TYPE;
+
 public class KafkaEventQueueProvider implements EventQueueProvider {
     private static final Logger logger = LoggerFactory.getLogger(KafkaEventQueueProvider.class);
 
@@ -28,7 +30,7 @@ public class KafkaEventQueueProvider implements EventQueueProvider {
 
     @Override
     public String getQueueType() {
-        return "kafka";
+        return QUEUE_TYPE;
     }
 
     @Override
@@ -46,7 +48,7 @@ public class KafkaEventQueueProvider implements EventQueueProvider {
         producerProperties.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, properties.getBootstrapServers());
         producerProperties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         producerProperties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        producerProperties.put(ProducerConfig.CLIENT_ID_CONFIG, "common_producer");
+        producerProperties.put(ProducerConfig.CLIENT_ID_CONFIG, properties.getClientId());
         return new KafkaProducer<>(producerProperties);
     }
 }

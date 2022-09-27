@@ -8,7 +8,6 @@ import org.springframework.boot.convert.DurationUnit;
 
 @ConfigurationProperties("conductor.event-queues.kafka")
 public class KafkaEventQueueProperties {
-
     private Integer pollIntervalMs;
 
     private Integer pollTimeoutMs;
@@ -19,7 +18,7 @@ public class KafkaEventQueueProperties {
 
     private String offset = "earliest";
 
-    private Boolean autoCommit = false;
+    private String clientId = "conductor";
 
     public Integer getPollIntervalMs() {
         return pollIntervalMs;
@@ -61,11 +60,11 @@ public class KafkaEventQueueProperties {
         this.offset = offset;
     }
 
-    public Boolean getAutoCommit() {
-        return autoCommit;
+    public String getClientId() {
+        return clientId;
     }
 
-    public void setAutoCommit(Boolean autoCommit) {
-        this.autoCommit = autoCommit;
+    public void setClientId(String clientId) {
+        this.clientId = clientId;
     }
 }

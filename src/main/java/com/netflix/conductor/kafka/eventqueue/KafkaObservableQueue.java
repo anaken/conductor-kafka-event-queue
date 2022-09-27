@@ -43,7 +43,9 @@ public class KafkaObservableQueue implements ObservableQueue {
 
     private static final String QUEUE_FILTER_BY_PARTITION_KEY = "PARTITION_KEY";
 
-    private static final String QUEUE_TYPE = "kafka";
+    private static final String MSG_KEY_SEPARATOR = ":";
+
+    public static final String QUEUE_TYPE = "kafka";
 
     private final String queueURI;
 
@@ -153,7 +155,7 @@ public class KafkaObservableQueue implements ObservableQueue {
             consumerProperties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
             consumerProperties.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
 
-            consumerProperties.put(ConsumerConfig.CLIENT_ID_CONFIG, queueName + "_consumer_");
+            consumerProperties.put(ConsumerConfig.CLIENT_ID_CONFIG, queueName + "_conductor_consumer");
             checkConsumerProps(consumerProperties);
 
             /**
@@ -229,7 +231,7 @@ public class KafkaObservableQueue implements ObservableQueue {
         commitAsyncOffsets();
         List<String> messageIds = new ArrayList<>();
         for (Message message : messages) {
-            String[] idParts = message.getId().split(":");
+            String[] idParts = message.getId().split(MSG_KEY_SEPARATOR);
             int partitionNumber = Integer.parseInt(idParts[2]);
             for (String topic : this.topics) {
                 for (PartitionInfo partition : consumer.partitionsFor(topic)) {
@@ -320,7 +322,8 @@ public class KafkaObservableQueue implements ObservableQueue {
                 }
                 logger.debug("Consumer Record: key: {}, value: {}, partition: {}, offset: {}",
                         record.key(), record.value(), record.partition(), record.offset());
-                String id = record.key() + ":" + record.topic() + ":" + record.partition() + ":" + record.offset();
+                String id = record.key() + MSG_KEY_SEPARATOR + record.topic() + MSG_KEY_SEPARATOR +
+                        record.partition() + MSG_KEY_SEPARATOR + record.offset();
                 String messagePayload = String.format("{\"eventData\":%s,\"eventHeaders\":%s}",
                         record.value(), headersJson);
                 Message message = new Message(id, messagePayload, "");
