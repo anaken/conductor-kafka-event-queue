@@ -14,7 +14,7 @@ public class KafkaEventQueueProperties {
 
     private String bootstrapServers;
 
-    private String groupId;
+    private String defaultGroupId;
 
     private String offset = "earliest";
 
@@ -44,12 +44,12 @@ public class KafkaEventQueueProperties {
         this.bootstrapServers = bootstrapServers;
     }
 
-    public String getGroupId() {
-        return groupId;
+    public String getDefaultGroupId() {
+        return defaultGroupId;
     }
 
-    public void setGroupId(String groupId) {
-        this.groupId = groupId;
+    public void setDefaultGroupId(String defaultGroupId) {
+        this.defaultGroupId = defaultGroupId;
     }
 
     public String getOffset() {

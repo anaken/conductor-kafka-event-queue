@@ -16,8 +16,8 @@
 
       conductor.event-queues.kafka.enabled=true
       conductor.event-queues.kafka.bootstrap-servers=localtest:9092
-      conductor.event-queues.kafka.group-id=test-conductor
+      conductor.event-queues.kafka.default-group-id=test-conductor
       conductor.event-queues.kafka.offset=earliest
-      conductor.event-queues.kafka.auto-commit=false
+      conductor.event-queues.kafka.client-id=conductor
 
 * Build or run `conductor-server` project

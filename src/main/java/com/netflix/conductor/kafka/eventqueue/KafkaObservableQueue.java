@@ -44,6 +44,7 @@ public class KafkaObservableQueue implements ObservableQueue {
     private static final String QUEUE_FILTER_BY_PARTITION_KEY = "PARTITION_KEY";
 
     private static final String MSG_KEY_SEPARATOR = ":";
+    private static final String TOPICS_SEPARATOR = ",";
 
     public static final String QUEUE_TYPE = "kafka";
 
@@ -78,7 +79,7 @@ public class KafkaObservableQueue implements ObservableQueue {
     public KafkaObservableQueue(String queueName, KafkaEventQueueProperties properties,
                                 KafkaProducer<String, String> producer) {
         this.queueURI = queueName;
-        this.groupId = properties.getGroupId();
+        this.groupId = properties.getDefaultGroupId();
         Map<String, String> queueParams = parseParams();
         if (queueParams.isEmpty()) {
             String[] queueNameParts = queueName.split(":");
@@ -103,7 +104,7 @@ public class KafkaObservableQueue implements ObservableQueue {
                 this.filteringValue = queueParams.get(QUEUE_PARAM_FILTER_VALUE);
             }
         }
-        this.topics = Arrays.asList(this.queueName.split(","));
+        this.topics = Arrays.asList(this.queueName.split(TOPICS_SEPARATOR));
 
         if (properties.getPollIntervalMs() != null) {
             this.pollIntervalInMS = properties.getPollIntervalMs();
