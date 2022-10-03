@@ -2,7 +2,8 @@ package com.netflix.conductor.kafka.config;
 
 import com.netflix.conductor.core.events.EventQueueProvider;
 import com.netflix.conductor.core.events.queue.ObservableQueue;
-import com.netflix.conductor.kafka.eventqueue.KafkaObservableQueue;
+import com.netflix.conductor.kafka.eventqueue.KafkaConsumeObservableQueue;
+import com.netflix.conductor.kafka.eventqueue.KafkaPublishObservableQueue;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringSerializer;
@@ -14,13 +15,15 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static com.netflix.conductor.kafka.eventqueue.KafkaObservableQueue.QUEUE_TYPE;
+import static com.netflix.conductor.kafka.eventqueue.AbstractKafkaObservableQueue.QUEUE_TYPE;
 
 public class KafkaEventQueueProvider implements EventQueueProvider {
     private static final Logger logger = LoggerFactory.getLogger(KafkaEventQueueProvider.class);
 
     private final Map<String, ObservableQueue> queues = new ConcurrentHashMap<>();
+
     private final KafkaEventQueueProperties properties;
+
     private final KafkaProducer<String, String> producer;
 
     public KafkaEventQueueProvider(KafkaEventQueueProperties properties) {
@@ -36,7 +39,14 @@ public class KafkaEventQueueProvider implements EventQueueProvider {
     @Override
     @NonNull
     public ObservableQueue getQueue(String queueURI) {
-        return queues.computeIfAbsent(queueURI, q -> new KafkaObservableQueue(queueURI, properties, producer));
+        return queues.computeIfAbsent(queueURI, q -> {
+            logger.info("starting new queue: " + queueURI);
+            if (queueURI.contains("=")) {
+                return new KafkaConsumeObservableQueue(queueURI, properties);
+            } else {
+                return new KafkaPublishObservableQueue(queueURI, producer);
+            }
+        });
     }
 
     private KafkaProducer<String, String> createProducer(KafkaEventQueueProperties properties) {

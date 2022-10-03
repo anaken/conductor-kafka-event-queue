@@ -1,10 +1,6 @@
 package com.netflix.conductor.kafka.config;
 
-import java.time.Duration;
-import java.time.temporal.ChronoUnit;
-
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.boot.convert.DurationUnit;
 
 @ConfigurationProperties("conductor.event-queues.kafka")
 public class KafkaEventQueueProperties {
