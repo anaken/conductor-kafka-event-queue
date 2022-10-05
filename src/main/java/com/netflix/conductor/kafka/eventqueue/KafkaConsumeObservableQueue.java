@@ -31,7 +31,7 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
     private static final String QUEUE_PARAM_FILTER_VALUE = "filteringValue";
     private static final String QUEUE_PARAM_DLQ_TOPIC = "dlq";
 
-    public static final String QUEUE_PARAM_ID = "id";
+    public static final String QUEUE_PARAM_NAME = "name";
 
     private static final String QUEUE_FILTER_BY_PARTITION_KEY = "PARTITION_KEY";
 
@@ -82,7 +82,7 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
             throw new IllegalArgumentException(error);
         }
         this.queueName = queueParams.get(QUEUE_PARAM_TOPICS);
-        this.id = queueParams.get(QUEUE_PARAM_ID);
+        this.id = queueParams.get(QUEUE_PARAM_NAME);
         if (queueParams.containsKey(QUEUE_PARAM_GROUP)) {
             this.groupId = queueParams.get(QUEUE_PARAM_GROUP);
         }
@@ -263,7 +263,7 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
                         record.key(), record.value(), record.partition(), record.offset());
                 String id = record.key() + MSG_KEY_SEPARATOR + record.topic() + MSG_KEY_SEPARATOR +
                         record.partition() + MSG_KEY_SEPARATOR + record.offset();
-                String messagePayload = String.format("{\"eventData\":%s,\"eventHeaders\":%s,\"eventId\":\"%s\"}",
+                String messagePayload = String.format("{\"eventData\":%s,\"eventHeaders\":%s,\"eventKey\":\"%s\"}",
                         record.value(), headersJson, record.key());
 
                 Message message = new Message(id, messagePayload, "");

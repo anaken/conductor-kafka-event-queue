@@ -20,7 +20,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static com.netflix.conductor.kafka.eventqueue.AbstractKafkaObservableQueue.QUEUE_TYPE;
-import static com.netflix.conductor.kafka.eventqueue.KafkaConsumeObservableQueue.QUEUE_PARAM_ID;
+import static com.netflix.conductor.kafka.eventqueue.KafkaConsumeObservableQueue.QUEUE_PARAM_NAME;
 
 public class KafkaEventQueueProvider implements EventQueueProvider {
     private static final Logger logger = LoggerFactory.getLogger(KafkaEventQueueProvider.class);
@@ -60,7 +60,7 @@ public class KafkaEventQueueProvider implements EventQueueProvider {
     }
 
     private void removePreviousQueue(Map<String, String> params) {
-        String queueId = params.get(QUEUE_PARAM_ID);
+        String queueId = params.get(QUEUE_PARAM_NAME);
         if (queueId == null) {
             return;
         }

@@ -61,7 +61,7 @@ To consume messages from kafka, you need to create an event handler:
 
     {
         "name": "complete_task_demo_handler",
-        "event": "kafka:topics=topic1,topic2;dlq=demo-dlq1;id=main;version=0.0.1",
+        "event": "kafka:topics=topic1,topic2;dlq=demo-dlq1;name=complete_task_demo_handler;id=1bd18b58-98b8-4964-bd47-7c0b618df31a",
         "actions": [
             {
                 "action": "complete_task",
@@ -87,7 +87,8 @@ To consume messages from kafka, you need to create an event handler:
 | filteringHeader | Header name to get value for filtering consumed messages | false |
 | filteringValue | Value for matching to value of header `filteringHeader`  | false |
 | dlq | Topic to send failed messages. Failed messages is defined by conductor internal mechanism | false |
-| id | Unique id to recreate the consumer when the handler updates. Applies only if the queue URI is changed. To update queue URI without changes you can use some additional parameter, for example `version` | false |
+| name | Unique id to recreate the consumer when the handler updates. Applies only if the queue URI is changed. To update queue URI without changes you can use some additional parameter, for example `id` | true |
+| id | Unique id to recreate the consumer when the handler updates. Applies only if the queue URI is changed. To update queue URI without changes you can use some additional parameter, for example `id` | true |
 
   Event parameters:
 
@@ -95,4 +96,4 @@ To consume messages from kafka, you need to create an event handler:
 |-------|-------------|
 | eventData | Message payload |
 | eventHeaders | Message headers |
-| eventId | Message key |
+| eventKey | Message key |
