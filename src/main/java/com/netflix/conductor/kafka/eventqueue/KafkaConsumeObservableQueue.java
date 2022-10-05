@@ -263,7 +263,7 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
                         record.key(), record.value(), record.partition(), record.offset());
                 String id = record.key() + MSG_KEY_SEPARATOR + record.topic() + MSG_KEY_SEPARATOR +
                         record.partition() + MSG_KEY_SEPARATOR + record.offset();
-                String messagePayload = String.format("{\"eventData\":%s,\"eventHeaders\":%s,\"eventId\":%s}",
+                String messagePayload = String.format("{\"eventData\":%s,\"eventHeaders\":%s,\"eventId\":\"%s\"}",
                         record.value(), headersJson, record.key());
 
                 Message message = new Message(id, messagePayload, "");
