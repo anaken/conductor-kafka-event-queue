@@ -5,34 +5,33 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.netflix.conductor.core.events.queue.Message;
 import com.netflix.conductor.kafka.config.KafkaEventQueueProperties;
 import com.netflix.conductor.metrics.Monitors;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.clients.consumer.*;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.KafkaException;
-import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import rx.Observable;
+import rx.Subscription;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
     private static final Logger logger = LoggerFactory.getLogger(KafkaConsumeObservableQueue.class);
-
-    private static final Pattern QUEUE_PARAMS_PATTERN = Pattern.compile("([^=]+)=([^;]+);?");
 
     private static final String QUEUE_PARAM_TOPICS = "topics";
     private static final String QUEUE_PARAM_GROUP = "group";
     private static final String QUEUE_PARAM_FILTER_NAME = "filteringHeader";
     private static final String QUEUE_PARAM_FILTER_VALUE = "filteringValue";
+    private static final String QUEUE_PARAM_DLQ_TOPIC = "dlq";
+
+    public static final String QUEUE_PARAM_ID = "id";
 
     private static final String QUEUE_FILTER_BY_PARTITION_KEY = "PARTITION_KEY";
 
@@ -45,6 +44,8 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
 
     private List<String> topics;
 
+    private String id;
+
     private String groupId;
 
     private String filteringHeader;
@@ -52,6 +53,8 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
     private boolean filterByPartitionKey = false;
 
     private String filteringValue;
+
+    private String dlqTopic;
 
     private int pollIntervalInMS = 100;
 
@@ -61,21 +64,30 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
 
     private final ObjectMapper objectMapper;
 
-    private final ThreadLocal<Map<TopicPartition, Long>> commitOffsetMap = ThreadLocal.withInitial(HashMap::new);
+    private final KafkaProducer<String, byte[]> producer;
 
-    public KafkaConsumeObservableQueue(String queueName, KafkaEventQueueProperties properties) {
+    private Subscription subscription;
+
+    private ThreadLocal<Map<String, ConsumerRecord<String, String>>> consumedRecords = new ThreadLocal<>();
+
+    public KafkaConsumeObservableQueue(String queueName, Map<String, String> queueParams,
+                                       KafkaEventQueueProperties properties,
+                                       KafkaProducer<String, byte[]> producer) {
+        this.producer = producer;
         this.queueURI = queueName;
         this.groupId = properties.getDefaultGroupId();
-        if (properties.getPollIntervalMs() != null) {
-            this.pollIntervalInMS = properties.getPollIntervalMs();
+        if (!queueParams.containsKey(QUEUE_PARAM_TOPICS)) {
+            String error = String.format("Missing required parameter \"%s\".", QUEUE_PARAM_TOPICS);
+            logger.error(error);
+            throw new IllegalArgumentException(error);
         }
-        if (properties.getPollTimeoutMs() != null) {
-            this.pollTimeoutInMs = properties.getPollTimeoutMs();
-        }
-        Map<String, String> queueParams = parseParams();
         this.queueName = queueParams.get(QUEUE_PARAM_TOPICS);
+        this.id = queueParams.get(QUEUE_PARAM_ID);
         if (queueParams.containsKey(QUEUE_PARAM_GROUP)) {
             this.groupId = queueParams.get(QUEUE_PARAM_GROUP);
+        }
+        if (queueParams.containsKey(QUEUE_PARAM_DLQ_TOPIC)) {
+            this.dlqTopic = queueParams.get(QUEUE_PARAM_DLQ_TOPIC);
         }
         if (queueParams.containsKey(QUEUE_PARAM_FILTER_NAME) && queueParams.containsKey(QUEUE_PARAM_FILTER_VALUE)) {
             String filterName = queueParams.get(QUEUE_PARAM_FILTER_NAME);
@@ -86,23 +98,15 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
             }
             this.filteringValue = queueParams.get(QUEUE_PARAM_FILTER_VALUE);
         }
+        if (properties.getPollIntervalMs() != null) {
+            this.pollIntervalInMS = properties.getPollIntervalMs();
+        }
+        if (properties.getPollTimeoutMs() != null) {
+            this.pollTimeoutInMs = properties.getPollTimeoutMs();
+        }
         this.topics = Arrays.asList(this.queueName.split(TOPICS_SEPARATOR));
         this.objectMapper = new ObjectMapper();
         initConsumer(properties);
-    }
-
-    private Map<String, String> parseParams() {
-        Matcher matcher = QUEUE_PARAMS_PATTERN.matcher(this.queueURI);
-        Map<String, String> params = new HashMap<>();
-        while (matcher.find()) {
-            params.put(matcher.group(1), matcher.group(2));
-        }
-        if (!params.containsKey(QUEUE_PARAM_TOPICS)) {
-            String error = String.format("Missing required parameter \"%s\".", QUEUE_PARAM_TOPICS);
-            logger.error(error);
-            throw new IllegalArgumentException(error);
-        }
-        return params;
     }
 
     /**
@@ -128,6 +132,7 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
             consumerProperties.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
             consumerProperties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
             consumerProperties.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+            consumerProperties.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed");
 
             consumerProperties.put(ConsumerConfig.CLIENT_ID_CONFIG, queueURI + "_conductor_consumer");
             checkConsumerProps(consumerProperties);
@@ -135,7 +140,7 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
             this.consumer = new KafkaConsumer<>(consumerProperties);
             this.consumer.subscribe(this.topics);
         } catch (KafkaException e) {
-            e.printStackTrace();
+            logger.error("Error while configuring kafka consumer", e);
         }
     }
 
@@ -147,6 +152,10 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
     @Override
     public String getURI() {
         return queueURI;
+    }
+
+    public String getId() {
+        return id;
     }
 
     /**
@@ -185,45 +194,37 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
     private Observable.OnSubscribe<Message> getOnSubscribe() {
         return subscriber -> {
             Observable<Long> interval = Observable.interval(pollIntervalInMS, TimeUnit.MILLISECONDS);
-            interval.flatMap((Long x) -> Observable.from(receiveMessages()))
+            subscription = interval.flatMap((Long x) -> Observable.from(receiveMessages()))
                     .subscribe(subscriber::onNext, subscriber::onError);
         };
     }
 
     @Override
     public List<String> ack(List<Message> messages) {
-        List<String> messageIds = new ArrayList<>();
+        Map<TopicPartition, Long> offsetMap = new HashMap<>();
+        Map<String, ConsumerRecord<String, String>> failedRecords = consumedRecords.get();
         for (Message message : messages) {
             String[] idParts = message.getId().split(MSG_KEY_SEPARATOR);
-            int partitionNumber = Integer.parseInt(idParts[2]);
-            for (String topic : this.topics) {
-                for (PartitionInfo partition : consumer.partitionsFor(topic)) {
-                    if (partitionNumber == partition.partition()) {
-                        Map<TopicPartition, OffsetAndMetadata> currentOffsets = new HashMap<>();
-                        currentOffsets.put(new TopicPartition(idParts[1], partitionNumber),
-                                new OffsetAndMetadata(Integer.parseInt(idParts[3]) + 1, "no metadata"));
-                        try {
-                            consumer.commitSync(currentOffsets);
-                        } catch (KafkaException ke) {
-                            messageIds.add(message.getId());
-                            logger.error("kafka consumer selective commit failed.", ke);
-                        }
-                    }
-                }
-            }
+            putOffset(offsetMap, idParts[1], Integer.parseInt(idParts[2]), Integer.parseInt(idParts[3]));
+            failedRecords.remove(message.getId());
         }
-        return messageIds;
+        if (dlqTopic == null || failedRecords.isEmpty()) {
+            commitOffsets(offsetMap);
+        } else {
+            publishToDlqAndCommitOffsets(failedRecords.values(), offsetMap);
+        }
+        return Collections.emptyList();
     }
 
     /**
      * Polls the topics and retrieve the messages
      */
     private List<Message> receiveMessages() {
-        if (consumer != null) {
-            return receiveMessages(consumer);
-        } else {
+        if (!isRunning()) {
+            close();
             return Collections.emptyList();
         }
+        return receiveMessages(consumer);
     }
 
     /**
@@ -239,17 +240,19 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
                 return messages;
             }
 
-            logger.info("polled {} messages from kafka topic.", records.count());
+            logger.info("polled {} messages from kafka topic {}.", records.count(), this.queueURI);
+            Map<TopicPartition, Long> discardedOffsetMap = new HashMap<>();
+            Map<String, ConsumerRecord<String, String>> msgIdRecordMap = new HashMap<>();
             records.forEach(record -> {
                 Map<String, String> headers = new HashMap<>();
                 record.headers().forEach(header -> headers.put(header.key(),
                         new String(header.value(), StandardCharsets.UTF_8)));
                 if (this.filteringHeader != null && !this.filteringValue.equals(headers.get(this.filteringHeader))
                         || this.filterByPartitionKey && !this.filteringValue.equals(record.key())) {
-                    putDiscardedMsg(record.topic(), record.partition(), record.offset());
+                    putOffset(discardedOffsetMap, record.topic(), record.partition(), record.offset());
                     return;
                 }
-                putAcceptedMsg(record.topic(), record.partition());
+                removeOffset(discardedOffsetMap, record.topic(), record.partition());
                 String headersJson = null;
                 try {
                     headersJson = objectMapper.writeValueAsString(headers);
@@ -260,13 +263,15 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
                         record.key(), record.value(), record.partition(), record.offset());
                 String id = record.key() + MSG_KEY_SEPARATOR + record.topic() + MSG_KEY_SEPARATOR +
                         record.partition() + MSG_KEY_SEPARATOR + record.offset();
-                String messagePayload = String.format("{\"eventData\":%s,\"eventHeaders\":%s}",
-                        record.value(), headersJson);
+                String messagePayload = String.format("{\"eventData\":%s,\"eventHeaders\":%s,\"eventId\":%s}",
+                        record.value(), headersJson, record.key());
 
                 Message message = new Message(id, messagePayload, "");
                 messages.add(message);
+                msgIdRecordMap.put(id, record);
             });
-            commitAsyncOffsets();
+            consumedRecords.set(msgIdRecordMap);
+            commitOffsets(discardedOffsetMap);
             Monitors.recordEventQueueMessagesProcessed(QUEUE_TYPE, this.queueURI, messages.size());
         } catch (KafkaException e) {
             logger.error("kafka consumer message polling failed.", e);
@@ -275,29 +280,46 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
         return messages;
     }
 
-    private void putAcceptedMsg(String topic, int partition) {
+    private void removeOffset(Map<TopicPartition, Long> offsetMap, String topic, int partition) {
         TopicPartition topicPartition = new TopicPartition(topic, partition);
-        commitOffsetMap.get().remove(topicPartition);
+        offsetMap.remove(topicPartition);
     }
 
-    private void putDiscardedMsg(String topic, int partition, long offset) {
+    private void putOffset(Map<TopicPartition, Long> offsetMap, String topic, int partition, long offset) {
         TopicPartition topicPartition = new TopicPartition(topic, partition);
-        commitOffsetMap.get().compute(topicPartition, (k, v) -> v == null ? offset : Math.max(v, offset));
+        offsetMap.compute(topicPartition, (k, v) -> v == null ? offset : Math.max(v, offset));
     }
 
-    private void commitAsyncOffsets() {
-        Map<TopicPartition, OffsetAndMetadata> currentOffsets;
-        for (Map.Entry<TopicPartition, Long> offsetEntry : commitOffsetMap.get().entrySet()) {
-            currentOffsets = new HashMap<>();
-            currentOffsets.put(offsetEntry.getKey(),
+    private Map<TopicPartition, OffsetAndMetadata> buildPartitionOffsetMetadata(Map<TopicPartition, Long> offsetMap) {
+        Map<TopicPartition, OffsetAndMetadata> partitionsOffsets = new HashMap<>();
+        for (Map.Entry<TopicPartition, Long> offsetEntry : offsetMap.entrySet()) {
+            partitionsOffsets.put(offsetEntry.getKey(),
                     new OffsetAndMetadata(offsetEntry.getValue() + 1, "no metadata"));
-            try {
-                consumer.commitSync(currentOffsets);
-            } catch (KafkaException ke) {
-                logger.error("kafka consumer discarded messages commit failed.", ke);
-            }
         }
-        commitOffsetMap.get().clear();
+        return partitionsOffsets;
+    }
+
+    private void commitOffsets(Map<TopicPartition, Long> offsetMap) {
+        try {
+            consumer.commitSync(buildPartitionOffsetMetadata(offsetMap));
+        } catch (KafkaException ke) {
+            logger.error("kafka consumer commit failed.", ke);
+        }
+    }
+
+    private void publishToDlqAndCommitOffsets(Collection<ConsumerRecord<String, String>> records,
+                                              Map<TopicPartition, Long> offsetMap) {
+        producer.beginTransaction();
+        for (ConsumerRecord<String, String> consumerRecord : records) {
+            final ProducerRecord<String, byte[]> record = new ProducerRecord<>(dlqTopic, consumerRecord.key(),
+                    consumerRecord.value().getBytes(StandardCharsets.UTF_8));
+            for (Header header : consumerRecord.headers()) {
+                record.headers().add(header.key(), header.value());
+            }
+            producer.send(record);
+        }
+        producer.sendOffsetsToTransaction(buildPartitionOffsetMetadata(offsetMap), consumer.groupMetadata());
+        producer.commitTransaction();
     }
 
     @Override
@@ -309,6 +331,7 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
     public void close() {
         logger.info("Closing queue {}", this.queueURI);
         if (this.consumer != null) {
+            subscription.unsubscribe();
             consumer.unsubscribe();
             consumer.close();
         }

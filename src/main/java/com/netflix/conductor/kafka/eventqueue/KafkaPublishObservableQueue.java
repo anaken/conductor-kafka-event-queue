@@ -30,11 +30,11 @@ public class KafkaPublishObservableQueue extends AbstractKafkaObservableQueue {
 
     private final String queueName;
 
-    private final KafkaProducer<String, String> producer;
+    private final KafkaProducer<String, byte[]> producer;
 
     private final ObjectMapper objectMapper;
 
-    public KafkaPublishObservableQueue(String queueName, KafkaProducer<String, String> producer) {
+    public KafkaPublishObservableQueue(String queueName, KafkaProducer<String, byte[]> producer) {
         this.queueName = queueName;
         this.producer = producer;
         this.objectMapper = new ObjectMapper();
@@ -77,15 +77,15 @@ public class KafkaPublishObservableQueue extends AbstractKafkaObservableQueue {
                 continue;
             }
             String key = messageMap.containsKey(MSG_KEY) ? (String) messageMap.get(MSG_KEY) : message.getId();
-            String value;
+            byte[] value;
             try {
-                value = objectMapper.writeValueAsString(messageMap.get(MSG_VALUE));
+                value = objectMapper.writeValueAsBytes(messageMap.get(MSG_VALUE));
             } catch (JsonProcessingException e) {
                 logger.error("Error building json from message value");
                 continue;
             }
 
-            final ProducerRecord<String, String> record = new ProducerRecord<>(queueName, key, value);
+            final ProducerRecord<String, byte[]> record = new ProducerRecord<>(queueName, key, value);
 
             Map<String, String> headers = (Map) messageMap.get(MSG_HEADERS);
             if (headers != null) {
@@ -98,7 +98,9 @@ public class KafkaPublishObservableQueue extends AbstractKafkaObservableQueue {
 
             RecordMetadata metadata;
             try {
+                this.producer.beginTransaction();
                 metadata = this.producer.send(record).get();
+                this.producer.commitTransaction();
                 logger.info("Producer Record: key {}, value {}, headers {}, partition {}, offset {}", record.key(),
                         record.value(), record.headers(), metadata.partition(), metadata.offset());
             } catch (InterruptedException e) {
