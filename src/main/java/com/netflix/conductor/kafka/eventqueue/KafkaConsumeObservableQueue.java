@@ -32,6 +32,7 @@ public class KafkaConsumeObservableQueue extends AbstractKafkaObservableQueue {
     private static final String QUEUE_PARAM_DLQ_TOPIC = "dlq";
 
     public static final String QUEUE_PARAM_NAME = "name";
+    public static final String QUEUE_PARAM_VERSION = "id";
 
     private static final String QUEUE_FILTER_BY_PARTITION_KEY = "PARTITION_KEY";
 
