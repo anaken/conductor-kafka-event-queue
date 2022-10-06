@@ -22,7 +22,7 @@ public class KafkaPublishObservableQueue extends AbstractKafkaObservableQueue {
     private static final Logger logger = LoggerFactory.getLogger(KafkaPublishObservableQueue.class);
 
     private static final String MSG_HEADERS = "headers";
-    private static final String MSG_VALUE = "value";
+    private static final String MSG_VALUE = "payload";
     private static final String MSG_KEY = "key";
     private static final String MSG_WORKFLOW_ID = "workflowInstanceId";
 
