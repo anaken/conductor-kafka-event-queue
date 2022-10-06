@@ -83,12 +83,12 @@ To consume messages from kafka, you need to create an event handler:
 | Name  | Description | Required |
 |-------|-------------|----------|
 | topics | Comma separated topics list to consume | true |
+| name | Handler name | true |
+| id | Unique UUID. Must regenerated when the handler is changed | true |
 | group | Consumers group id. If not set, then the default group id from properties used | false |
 | filteringHeader | Header name to get value for filtering consumed messages | false |
 | filteringValue | Value for matching to value of header `filteringHeader`  | false |
 | dlq | Topic to send failed messages. Failed messages is defined by conductor internal mechanism | false |
-| name | Handler name | true |
-| id | Unique UUID. Must regenerated when the handler is changed | true |
 
   Event parameters:
 
