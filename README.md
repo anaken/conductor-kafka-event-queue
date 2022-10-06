@@ -87,8 +87,8 @@ To consume messages from kafka, you need to create an event handler:
 | filteringHeader | Header name to get value for filtering consumed messages | false |
 | filteringValue | Value for matching to value of header `filteringHeader`  | false |
 | dlq | Topic to send failed messages. Failed messages is defined by conductor internal mechanism | false |
-| name | Unique id to recreate the consumer when the handler updates. Applies only if the queue URI is changed. To update queue URI without changes you can use some additional parameter, for example `id` | true |
-| id | Unique id to recreate the consumer when the handler updates. Applies only if the queue URI is changed. To update queue URI without changes you can use some additional parameter, for example `id` | true |
+| name | Handler name | true |
+| id | Unique UUID. Must regenerated when the handler is changed | true |
 
   Event parameters:
 
