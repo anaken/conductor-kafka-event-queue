@@ -1,9 +1,11 @@
 # How to use
+
 * Clone conductor repository
 
       $ git clone https://github.com/Netflix/conductor.git
 
-* Copy contents of `conductor-kafka-event-queue` to new folder `kafka-event-queue` created in the root of netflix conductor repository
+* Copy contents of `conductor-kafka-event-queue` to new folder `kafka-event-queue` created in the root of netflix
+  conductor repository
 * Add project to `settings.gradle` like this:
 
       include 'kafka-event-queue'
@@ -25,7 +27,8 @@
 ---
 
 # Usage examples
-  * Producer
+
+* Producer
 
 To produce messages to kafka, you need to create an EVENT type task:
 
@@ -33,35 +36,36 @@ To produce messages to kafka, you need to create an EVENT type task:
         "name": "sendToKafka",
         "taskReferenceName": "sendToKafka",
         "inputParameters": {
+            "key": "123",
             "headers": {
                 "myHeader1": "testHeaderValue1",
                 "myHeader2": "testHeaderValue2"
             },
-            "value": {
+            "payload": {
                 "myBusinessData": "${workflow.input.myInputBusinessData}"
-            },
-            "key": "123"
+            }
         },
         "sink": "kafka:topic1",
         "type": "EVENT"
     }
-  Input parameters:
-  
-| Name  | Description | Required |
-|-------|-------------|----------|
-| value | Payload of message | true |
-| headers | Map of message headers | false |
-| key | Key of message | false |
+
+Input parameters:
+
+| Name | Description | Type | Required |
+|---------|-------------|-------|----------|
+| key | Key of message | String | false    |
+| headers | Map of message headers | Map<String, String> | false    |
+| payload | Payload of message | JSON | true |
 
 ---
 
-  * Consumer
+* Consumer
 
 To consume messages from kafka, you need to create an event handler:
 
     {
         "name": "complete_task_demo_handler",
-        "event": "kafka:topics=topic1,topic2;dlq=demo-dlq1;name=complete_task_demo_handler;id=1bd18b58-98b8-4964-bd47-7c0b618df31a",
+        "event": "kafka:id=1bd18b58-98b8-4964-bd47-7c0b618df31a;name=complete_task_demo_handler;topics=topic1,topic2;dlq=demo-dlq1",
         "actions": [
             {
                 "action": "complete_task",
@@ -69,31 +73,32 @@ To consume messages from kafka, you need to create an event handler:
                     "workflowId": "${eventHeaders.workflowInstanceId}",
                     "taskRefName": "${eventHeaders.taskRef}",
                     "output": {
-                        "messageData": "${eventData}",
+                        "messageKey": "${eventKey}",
                         "messageHeaders": "${eventHeaders}",
-                        "messageId": "${eventId}"
+                        "messagePayload": "${eventPayload}"
                     }
                 }
             }
         ],
         "active": true
     }
-  Queue URI parameters:
 
-| Name  | Description | Required |
-|-------|-------------|----------|
-| topics | Comma separated topics list to consume | true |
-| name | Handler name | true |
-| id | Unique UUID. Must regenerated when the handler is changed | true |
-| group | Consumers group id. If not set, then the default group id from properties used | false |
-| filteringHeader | Header name to get value for filtering consumed messages | false |
-| filteringValue | Value for matching to value of header `filteringHeader`  | false |
-| dlq | Topic to send failed messages. Failed messages is defined by conductor internal mechanism | false |
+Queue URI parameters:
 
-  Event parameters:
+| Name  | Description                                                                                                                 | Type          | Required                       |
+|-------|-----------------------------------------------------------------------------------------------------------------------------|---------------|--------------------------------|
+| id | Unique identifier. Should be generated each time on handler creation/update/removal API call                                | UUID          | true                           |
+| name | Handler name. Reuse the same value as handler name                                                                          | String        | true                           |
+| topics | Comma separated topics list to consume                                                                                      | List\<String> | true                           |
+| group | Consumer group id. If not set, then the default group id from properties will be used                                       | String        | false                          |
+| dlq | DLQ(dead letter queue) topic name. Messages which were not processed by conductor for some reason will be sent to this topic | String        | false                          |
+| filteringHeader | Header name which will be used to filter out unnecessary message                                                            | String        | false                          |
+| filteringValue | Value of `filteringHeader`                                                                                                  | String        | true if filteringHeader is set |
 
-| Name  | Description |
-|-------|-------------|
-| eventData | Message payload |
+Event parameters:
+
+| Name         | Description |
+|--------------|-------------|
+| eventKey     | Message key |
+| eventPayload | Message payload |
 | eventHeaders | Message headers |
-| eventKey | Message key |
