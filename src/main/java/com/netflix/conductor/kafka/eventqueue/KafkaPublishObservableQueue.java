@@ -90,7 +90,8 @@ public class KafkaPublishObservableQueue extends AbstractKafkaObservableQueue {
             Map<String, String> headers = (Map) messageMap.get(MSG_HEADERS);
             if (headers != null) {
                 for (Map.Entry<String, String> headerEntry : headers.entrySet()) {
-                    record.headers().add(headerEntry.getKey(), headerEntry.getValue().getBytes(StandardCharsets.UTF_8));
+                    record.headers().add(headerEntry.getKey(), headerEntry.getValue() == null ? null :
+                            headerEntry.getValue().getBytes(StandardCharsets.UTF_8));
                 }
             }
             record.headers().add(RECORD_HEADER_WORKFLOW_ID, ((String) messageMap.get(MSG_WORKFLOW_ID))
